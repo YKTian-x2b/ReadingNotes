@@ -31,7 +31,7 @@
 
 ## 1.架构
 
-<img src="C:/Users/Lenovo/Desktop/TyporaAll/Typora%E5%9B%BE%E7%89%87/ClickHouse%E6%9E%B6%E6%9E%84.png" style="zoom:67%;" />
+<img src="https://raw.githubusercontent.com/JiXuanYu0823/ReadingNotes/main/assets/ClickHouse%E6%9E%B6%E6%9E%84.png" alt="ClickHouse架构" style="zoom:50%;" />
 
 ### 1.1 Column和Field
 

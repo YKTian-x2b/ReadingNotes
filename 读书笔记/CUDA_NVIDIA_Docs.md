@@ -895,7 +895,7 @@ cudaStreamSynchronize(0); // After the launch is synchronized, the remaining
 - [CUDA ---- Memory Model - 苹果妖 - 博客园 (cnblogs.com)](https://www.cnblogs.com/1024incn/p/4564726.html)
 - 在CUDA中，纹理内存和常量内存同全局内存一样，可以被所有线程访问。他俩都是只读内存。
 
-![](C:/Users/Lenovo/Desktop/TyporaAll/Typora%E5%9B%BE%E7%89%87/CUDA%E5%8F%AF%E7%BC%96%E7%A8%8B%E5%86%85%E5%AD%98%E6%9E%B6%E6%9E%84.png)
+![CUDA可编程内存架构](https://raw.githubusercontent.com/JiXuanYu0823/ReadingNotes/main/assets/CUDA%E5%8F%AF%E7%BC%96%E7%A8%8B%E5%86%85%E5%AD%98%E6%9E%B6%E6%9E%84.png)
 
 
 

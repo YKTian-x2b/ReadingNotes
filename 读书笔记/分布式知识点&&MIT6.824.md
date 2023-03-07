@@ -129,7 +129,7 @@ C/S、主-从、总线、对等。
 
 > 为方便网络上不同节点之间互操作而定义的一套协议标准，也可视为实现远程过程调用的一套协议标准。
 
-<img src="C:\Users\Lenovo\AppData\Roaming\Typora\typora-user-images\image-20220624111605415.png" alt="image-20220624111605415" style="zoom:50%;" />
+<img src="https://raw.githubusercontent.com/JiXuanYu0823/ReadingNotes/main/assets/WebService%E5%8D%8F%E8%AE%AE%E6%A0%88.png" alt="WebService协议栈" style="zoom: 50%;" />
 
 ## 14.消息中间件
 
