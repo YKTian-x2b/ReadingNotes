@@ -135,7 +135,7 @@
   - /etc/cron.d/clickhouse-server：cron定时任务配置，⽤于恢复因异常原因中断的ClickHouse服务进程。
 
 - 在/usr/bin路径下的可执⾏文件：
-  - ickhouse：主程序的可执行文件。
+  - clickhouse：主程序的可执行文件。
   - clickhouse-client：⼀个指向ClickHouse可执行⽂件的软链接，供客户端连接使⽤。
   - clickhouse-server：⼀个指向ClickHouse可执行⽂件的软链接，供服务端启动使⽤。
   - clickhouse-compressor：内置提供的压缩⼯具，可⽤于数据的正压反解。

@@ -1162,7 +1162,7 @@ int main(int argc, char **argv){
 
 - 外部碎片化：heap有足够空闲block空间，但是没有单个block可以满足当前请求的size。
 
-- 外部碎片化的解决方案：隐式链表、显式链表。
+- 外部碎片化的解决方案：隐式链表、显式链表、segregated free list。
 - 隐式：在block头、尾占用一个B去表示，block size和占用情况。尾字节（boundary tag）是用来被下一个block合并的。
   - 已分配的块中，可以不要尾字节。下一个block通过头字节倒数第二低位来判定占用情况。因为要字节对齐，所以头字节低位一定是000。
   - 如果是空闲块，那它就需要一个尾字节，但那无所谓，因为它就是空的。如果是占用块，就能省一个字节。
@@ -1174,21 +1174,625 @@ int main(int argc, char **argv){
   - 对任意的内存请求序列，maxP(K)是固定的，但H(K)取决于堆存储的效率。
 - 显式空闲链表：挑个空闲空间存所有空闲空间的双向链表。
 
+- segregated free list
+
+- 《Dynamic Storage Allocation: A Survey and Critical Review》
+
+- 隐式内存管理可以做垃圾回收工作：找没有指针指向的block => 区分指针和非指针 => 从指针分析其所在的block
+
+- Mark and Sweep Collecting: 当空间耗尽时：
+  - 1.在block的header使用额外mark bit；
+  - 2.从root开始标记可达block；
+  - 3.扫描所有block并释放未标记block。
+
+~~~C++
+// Mark and Sweep
+// 内存图的深搜标记
+ptr mark(ptr p){
+    if(!is_ptr(p))	return;
+    if(markBitSet(p))	return;
+    setMarkBit(p);
+    for(int i = 0; i < length(p); i++){
+        mark(p[i]);
+    }
+    return;
+}
+// Sweep
+ptr sweep(ptr p, ptr end){
+    while(p < end){
+        if(markBitSet(p))
+            clearMarkBit();
+        else if(allocateBitSet(p))
+            free(p);
+        p += length(p);
+    }
+}
+~~~
+
+- 如何从指针找到Block的header：
+  - 我们会假设Block里全都是指针，然后构建Block的平衡二叉树，当有一个指针时，我们就通过平衡二叉树找到它，进而确定节点。
+  - C里会假设某个内存位置是指针，但事实上假设可能是错的，从而导致误判。所以C的垃圾回收很保守。
+
+- C指针究极测试
+  - 这里需要知道()/[]/*的优先级然后，从最靠近变量名的符号开始读起。
+
+
+<img src="https://raw.githubusercontent.com/JiXuanYu0823/ReadingNotes/main/assets/C%E6%8C%87%E9%92%88%E7%A9%B6%E6%9E%81%E6%B5%8B%E8%AF%95.png" alt="C指针究极测试" style="zoom:67%;" />
 
 
 
+## 17.网络编程（一）
 
+- nslookup
+- 一个域名的nslookup可能会产生多个不确定的ip地址，表示不止一个服务中心在提供服务。同样多个域名也可以指向同一个ip。
 
+<img src="https://raw.githubusercontent.com/JiXuanYu0823/ReadingNotes/main/assets/Socket%E6%8E%A5%E5%8F%A3.png" alt="Socket接口" style="zoom:50%;" />
 
+- socket
 
+~~~C
+#include<sys/types.h>
+#include<sys/socket.h>
+// 协议簇 socket类型 protocol
+// 协议簇：AF_UNIX for 本机通信; AF_INET for TCP/IP-IPv4; AF_INET6 TCP/IP-IPv6
+// socket类型：SOCK_STREAM for TCP流; SOCK_DGRAM for UDP数据报; SOCK_RAW for 原始套接字
+// protocal：创建原始套接字不知道要用什么协议簇和类型时，用protocol确定协议种类；一般为0
+// user call
+int socket(int domain, int type, int protocol);
+// example
+int clientfd = Socket(AF_INET, SOCK_STREAM, 0);
+~~~
 
+- bind
 
+~~~C
+// Server API; server uses bind to ask the kernel to associate the server's socket addr with socket descriptor
+// socket file descriptor && sockaddr struct && addrlen
+// kernel call
+int bind(int sockfd, SA *addr, socklen_t addrlen);
+~~~
 
+- listen
 
+~~~C
+// 将sockfd从活跃态转换为监听态 可以接受客户端的连接请求
+int listen(int sockfd, int backlog);
+~~~
 
+- accept
 
+~~~C
+// ready for connection 挂起并等待连接 返回不同fd
+int accept(int listenfd, SA *addr, int *addrlen);
+~~~
 
+- connect
 
+~~~C
+// 发起连接请求
+int connect(int clientfd, SA *addr, socklen_t addrlen);
+~~~
+
+- getaddrinfo
+
+~~~C
+// hostname or addr ; IPv4 ; 提示; addrinfo链表
+int getaddrinfo(const char *host, const char *service, const struct addrinfo *hints, struct addrinfo **result);
+
+void freeaddrinfo(struct addrinfo *result);
+
+const char *gai_strerror(int errcode);
+~~~
+
+~~~C
+// nslookup 
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <cstdio>
+#include <cstring>
+#include <netdb.h>
+#include <cstdlib>
+#include <unistd.h>
+
+#define MAXLINE 2048
+
+// struct addrinfo{
+//     int ai_flags;
+//     int ai_family;
+//     int ai_socktype;
+//     int ai_protocol;
+//     char * ai_canonname;
+//     size_t ai_addrlen;
+//     struct sockaddr * ai_addr;
+//     struct addrinfo * ai_next;
+// };
+
+void Getaddrinfo(const char *__restrict__ name, const char *__restrict__ service, 
+                    const addrinfo *__restrict__ req,  addrinfo **__restrict__ pai){
+    int rc;
+    if((rc = getaddrinfo(name, service, req, pai)) != 0){
+        fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(rc));
+        exit(1);
+    }                
+}
+
+void Getnameinfo(const sockaddr *__restrict__ sa, socklen_t salen, 
+                    char *__restrict__ host, socklen_t hostlen, 
+                    char *__restrict__ serv, socklen_t servlen, int flags){
+    int rc;
+    if((rc = getnameinfo(sa, salen, host, hostlen, serv, servlen, flags)) != 0){
+        fprintf(stderr, "getnameinfo error: %s\n", gai_strerror(rc));
+        exit(1);
+    }
+}
+
+int main(int argc, char ** argv){
+    struct addrinfo *p, *listp, hints;
+    char buf[MAXLINE];
+    int rc, flags;
+    
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    Getaddrinfo(argv[1], NULL, &hints, &listp);
+    
+    flags = NI_NUMERICHOST;
+    for(p = listp; p; p = p->ai_next){
+        Getnameinfo(p->ai_addr, p->ai_addrlen, buf, MAXLINE, NULL, 0, flags);
+        printf("%s\n", buf);
+    }
+    freeaddrinfo(listp);
+    exit(0);
+}
+~~~
+
+## 18.网络编程（二）
+
+- Client connect to Server:
+
+~~~C
+int open_clientfd(char *hostname, char *port){
+    int clientfd;
+    struct addrinfo hints, *listp, *p;
+    
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_NUMERICSERV;
+    hints.ai_flags |= AI_ADDRCONFIG;
+    Getaddrinfo(hostname, port, &hints, &listp);
+    
+    for(p = listp; p; p = p->ai_next){
+        if((clientfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) < 0)
+            continue;
+        if(connect(clientfd, p->ai_addr, p->ai_addrlen) != -1)
+            break;		// success
+        Close(clientfd);
+    }
+    freeaddrinfo(listp);
+    if(!p)
+        return -1;
+    else
+        return clientfd;
+}
+~~~
+
+- Server create listening descriptor which can be used to accept
+
+~~~C
+int open_listenfd(char *port){
+    int listenfd, optval = 1;
+    struct addrinfo hints, *listp, *p;
+    
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_socktype = SOCK_STREAM;
+    // ai_passive 
+    // ai_addrconfig 根据主机配置来查询 只有主机配置了IPv6地址才查询IPv6地址 只有主机配置了IPv4地址才查询IPv4地址
+    hints.ai_flags = AI_PASSIVE | AI_ADDRCONFIG;
+    hints.ai_flags |= AI_NUMERICSERV;
+    Getaddrinfo(NULL, port, &hints, &listp);
+    
+    for(p = listp; p; p = p->ai_next){
+        if((listenfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) < 0)
+            continue;
+        
+        Setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, (const void *)&optval, sizeof(int));
+        
+        if(bind(listenfd, p->ai_addr, p->ai_addrlen) == 0)
+            break;		// success
+        Close(listenfd);
+    }
+    freeaddrinfo(listp);
+    if(!p)
+        return -1;
+    if(listen(listenfd, LISTENQ) < 0){
+        Close(listenfd);
+        return -1;
+    }
+    return listenfd;
+}
+~~~
+
+- echo Server
+
+~~~C
+// client
+int main(int argc, char **argv){
+    int clientfd;
+    char *host, *port, buf[MAXLINE];
+    rio_t rio;
+    host = argv[1];
+    port = argv[2];
+    clientfd = Open_clientfd(host, port);
+    Rio_readinitb(&rio, clientfd);
+    while(Fgets(buf, MAXLINE, stdin) != NULL){
+        Rio_writen(clientfd, buf, strlen(buf));
+        Rio_readlineb(&rio, buf, MAXLINE);
+        Fputs(buf, stdout);
+    }
+    Close(clientfd);
+    exit(0);
+}
+
+// server
+void echo(int connfd){
+    size_t n;
+    char buf[MAXLINE];
+    rio_t rio;
+    
+    Rio_readinitb(&rio, connfd);
+    while((n = Rio_readlineb(&rio, buf, MAXLINE)) != 0){
+        printf("server received %d bytes\n", (int)n);
+        Rio_writen(connfd, buf, n);
+    }
+}
+
+int main(int argc, char **argv){
+    int listenfd, connfd;
+    socklen_t clientlen;
+    struct sockaddr_storage clientaddr;
+    char client_hostname[MAXLINE], client_port[MAXLINE];
+    
+    listenfd = Open_listenfd(argv[1]);
+    while(1){
+        clientlen = sizeof(struct sockaddr_storage);
+        connfd = Accept(listenfd, (SA*)&clientaddr, &clientlen);
+        Getnameinfo((SA*)&clientaddr, clientlen, client_hostname, MAXLINE, client_port, MAXLINE, 0);
+        printf("Connected to (%s, %s)\n", client_hostname, client_port);
+        echo(connfd);
+        Close(confd);
+    }
+    exit(0);
+}
+~~~
+
+- Serving Dynamic Content with GET
+
+~~~C
+void serve_dynamic(int fd, char *filename, char *agiargs){
+    char buf[MAXLINE], *emptylist[] = {NULL};
+    sprintf(buf, "HTTP/1.0 200 OK\r\n");
+    Rio_writen(fd, buf, strlen(buf));
+    sprintf(buf, "Server: Tiny Web Server\r\n");
+    Rio_writen(fd, buf, strlen(buf));
+    
+    if(Fork() == 0){	// child exe
+        // set all CGI vars here
+        setenv("QUERY_STRING", cgiargs, 1);
+        // redirect stdout to its connected socket; child out to client
+        Dup2(fd, STDOUT_FILENO);
+        Execve(filename, emptylist, environ);
+    }
+    Wait(NULL);		// parent waits for and reaps child
+    
+    sprintf(content, "Welcome to add.com: ");
+    sprintf(content, "%s THE Internet addition portal. \r\n<p>", content);
+    sprintf(content, "%s THE answer is: %d + %d = %d \r\n<p>", content, n1, n2, n1+n2);
+    
+    printf("Content-length: %d\r\n", (int)strlen(content));
+    printf("Content-type: text/html\r\n\r\n");
+    printf("%s", content);
+    fflush(stdout);
+    
+    exit(0);
+}
+~~~
+
+## 19.并发编程
+
+- 并发服务器编写的三种方法：
+
+  - 基于进程的：kernel自动调度多个逻辑流，每个逻辑流有自己的私有地址空间
+    - 每收到一个connect请求，都fork出一个子进程来处理。
+    - 缺点是开销非常大，每个请求都要用一个进程来完成。
+  - 基于事件的：开发人员手动调度多个逻辑流，所有流共享相同的地址空间，IO多路复用技术。
+    - 维护一组connfd，由select或epoll来确定哪些fd有待处理的输入。输入到达fd称为事件，事件会改变fd的状态。
+    - 缺点是无法利用多核优势，很难提供细粒度并发。
+
+  - 基于线程的：kernel自动调度多个逻辑流，逻辑流共享相同的地址空间，是上述两种方案的结合。
+    - 每收到一个connect请求，都create出一个线程来处理。
+    - 很难debug 因为多线程
+
+~~~C
+void *thread(void *vargp){
+    printf("Hello World\n");
+    return NULL;
+}
+int main(){
+    pthread_t tid;
+    Pthread_create(&tid, NULL, thread, NULL);
+    Pthread_join(tid, NULL);
+    exit(0);
+}
+~~~
+
+- thread based concurrent echo server 
+
+~~~C
+void *thread(void *vargp){
+    int connfd = *((int *)vargp);
+    Pthread_detach(pthread_self());		// 与其他线程解绑独立 无法被其他线程杀死 自动被reap 与joinable相对
+    Free(vargp);
+    echo(connfd);
+    Close(connfd);
+}
+
+int main(int argc, char **argv){
+    int listenfd, *connfdp;
+    socklen_t clientlen;
+    struct sockaddr_storage clientaddr;
+    pthread_t tid;
+    
+    listenfd = Open_listenfd(argv[1]);
+    while(1){
+        clientlen = sizeof(struct sockaddr_storage);
+        connfdp = Malloc(sizeof(int));
+        *connfdp = Accept(listenfd, (SA*)&clientaddr, &clientlen);
+        Pthread_create(&tid, NULL, thread, connfdp);		// race connfdp
+    }
+}
+~~~
+
+## 20.同步：基础
+
+- 变量x被共享：当且仅当多个线程引用了x的实例。共享与否要思考三个问题
+  - 多线程的内存模型是怎么样的
+  - 变量实例如何映射到内存
+  - 有多少线程可能正在引用这些实例
+
+- 线程内存模型：各线程的寄存器确实是分离和受保护的，但是栈空间可以被其他线程读写。
+- 变量实例的内存映射
+  - 全局和静态的变量仅有一个实例存在.data里，本地的变量在每个线程栈里都有一个实例。
+
+### 20.1 信号量
+
+- Semaphores（信号量）：非负全局整数，P和V系统call的变量。
+- P(s):
+  - if s is not zero,  decrement s by 1 and return immediately. Test and decrement ops occur atomically.
+  - if s is zero, then suspend（挂起） thread until s becomes nonzero and the thread is restarted by a V op.
+  - After restarting, the P op decrements s and returns control to the caller.
+
+- V(s):
+  - increment s by 1 atomically.
+  - if there are any threads blocked in a P op waiting for s to become nonzero, then restart exactly one of those threads.
+
+~~~C
+#include <semaphore.h>
+int sem_init(sem_t *s, 0, unsigned int val);	// s = val
+int sem_wait(sem_t *s);							// P(s)
+int sem_post(sem_t *s);							// V(s)
+~~~
+
+~~~C
+volatile long cnt = 0;
+sem_t mutex;
+Sem_init(&mutex, 0, 1);
+// 两个线程都会执行该for循环
+for(int i = 0; i < niters; i++){
+    P(&mutex);
+    cnt++;
+    V(&mutex);
+}
+~~~
+
+## 21.同步：高级
+
+- 消费者-生产者模式
+
+~~~C
+typedef struct{
+    int *buf;		// buffer array
+    int n;			// max num of slots
+    int front;		// buf[(front+1)%n] is first item
+    int rear;		// buf[rear%n] is last item
+    sem_t mutex;	// protect access to buf
+    sem_t slots;	// count available slots
+    sem_t items;	// count available items
+}sbuf_t;
+
+void sbuf_init(sbuf_t *sp, int n);		// 初始化buffer
+void sbuf_deinit(sbuf_t *sp);			// 释放buffer
+void sbuf_insert(sbuf_t *sp, int item);	// 向buffer的slot插入item
+void sbuf_remove(sbuf_t *sp);			// 移除item
+// 这里buffer是一个队列 FIFO
+
+void sbuf_init(sbuf_t *sp, int n){
+    sp->buf = Calloc(n, sizeof(int));
+    sp->n = n;
+    sp->front = sp->rear = 0;
+    Sem_init(&sp->mutex, 0, 1);
+    Sem_init(&sp->mutex, 0, n);
+    Sem_init(&sp->mutex, 0, 0);
+}
+void sbuf_deinit(sbuf_t *sp){
+    Free(sp->buf);
+}
+void sbuf_insert(sbuf_t *sp, int item){
+    P(&sp->slots);
+    P(&sp->mutex);
+    sp->buf[(++sp->rear)%(sp->n)] = item;
+    V(&sp->mutex);
+    V(&sp->items);
+}
+void sbuf_remove(sbuf_t *sp){
+    P(&sp->items);
+    P(&sp->mutex);
+    int item = sp->buf[(++sp->front)%(sp->n)];
+    V(&sp->mutex);
+    V(&sp->slots);
+    return item;
+}
+~~~
+
+- 读者-写者模式
+
+~~~C
+// 第一类读者写者模式 读者优先
+int readcnt = 0;
+sem_t mutex, w;		// all initial 1
+
+void reader(void){
+    while(1){
+        P(&mutex);
+        readcnt++;
+        if(readcnt == 1)
+            P(&w);
+        V(&mutex);
+        // read();
+        P(&mutex);
+        readcnt--;
+        if(readcnt == 0)
+            V(&w);
+        V(&mutex);
+    }
+}
+void writer(void){
+    while(1){
+        P(&w);
+        // write();
+        V(&w);
+    }
+}
+~~~
+
+- prethreaded Concurrent Server
+
+~~~C
+// echoservert_pre.c
+sbuf_t sbuf;
+
+void *thread(void *vargp){
+    Pthread_detach(pthread_self());
+    while(1){
+        int connfd = sbuf_remove(&sbuf);
+        echo_cnt(connfd);
+        Close(connfd);
+    }
+}
+
+int main(int argc, char ** argv){
+    int i, listenfd, connfd;
+    socklen_t clientlen;
+    struct sockaddr_storage clientaddr;
+    pthread_t tid;
+    
+    listenfd = Open_listenfd(argv[1]);
+    sbuf_init(&sbuf, SBUFSIZE);
+    for(int i = 0; i < NTHREADS; i++){
+        Pthread_create(&tid, NULL, thread, NULL);
+    }
+    while(1){
+        clientlen = sizeof(struct sockaddr_storage);
+        connfd = Accept(listenfd, (SA*)&clientaddr, &clientlen);
+        sbuf_insert(&sbuf, connfd);
+    }
+}
+
+// echo_cnt.c
+static int byte_cnt;
+static sem_t mutex;
+
+static void init_echo_cnt(void){
+    Sem_init(&mutex, 0, 1);
+    byte_cnt = 0;
+}
+
+void echo_cnt(int connfd){
+    int n;
+    char buf[MAXLINE];
+    rio_t rio;
+    static pthread_once_t once = PTHREAD_ONCE_INIT;
+    
+    Pthread_once(&once, init_echo_cnt);			// 所有线程都会call this func 但是只有一个线程会执行
+    Rio_readinitb(&rio, connfd);
+    while((n = Rio_readlineb(&rio, buf, MAXLINE)) != 0){
+        P(&mutex);
+        byte_cnt += n;
+        printf("thread %d received %d (%d total) bytes on fd %d\n", (int)pthread_self(), n, byte_cnt, connfd);
+        V(&mutex);
+        Rio_writen(connfd, buf, n);
+    }
+}
+~~~
+
+- 线程不安全函数：
+  - 函数没有保护共享变量
+  - 函数有跨多个调用的追踪状态
+    - 它将状态存储到全局变量中
+  - 函数返回一个指向静态变量的指针
+  - 调用了线程不安全函数的函数
+
+~~~C
+// 函数有跨多个调用的追踪状态
+static unsigned int next = 1;
+int rand(void){
+    next = next*1103532323 + 122334;
+    return (unsigned int)(next/65536) % 32768;
+}
+void srand(unsigned int seed){
+    next = seed;
+}
+// 可以看到C的随机函数库 rand结果会依赖于next静态变量 在多线程状态下 next可能不是本线程写回的next 就不安全
+
+// 解决方案是每个caller都维护一个独立的next副本
+int rand_r(int *nextp){
+    *nextp = *nextp * 110340953 +12335;
+    return (unsigned int)(*nextp/65536)%32768;
+}
+~~~
+
+- 可重入函数(Reentrant Functions)：线程安全的函数的子类。如果函数不包含对共享变量的访问，则函数可重入。
+
+~~~C++
+// main thread
+int i;
+for(int i = 0; i < 100; i++){
+    Pthread_create(&tid, NULL, thread, &i);			// i的指针会导致变量i的race
+}
+// peer thread
+void *thread(void *vargp){
+    Pthread_detach(pthread_self());
+    int i = *((int*)vargp);
+    save_value(i);
+    return NULL;
+}
+// 修正
+for(int i = 0; i < 100; i++){
+    ptr = Malloc(sizeof(int));
+    *ptr = i;
+    Pthread_create(&tid[i], NULL, thread, ptr);
+}
+~~~
+
+- 死锁
+
+## 22.线程级并行
+
+- Snoopy cache：Cache需要对共享总线进行侦测，如果侦测到总线上的操作与自己cache中的某个cache block相符合(tag一致)，则采取某种动作：
+  - Write Invalid
+  - Write update
+
+- 缓存更新或读写的过程中，尽可能避免内存读，延迟内存写。
 
 
 
@@ -1233,5 +1837,5 @@ testq 	a, b	;对两个操作数进行逻辑（按位）与操作 并根据运算
 
 - Linux进程的虚拟内存空间
 
-![Linux进程虚拟内存空间](https://raw.githubusercontent.com/JiXuanYu0823/ReadingNotes/main/assets/Linux%E8%BF%9B%E7%A8%8B%E8%99%9A%E6%8B%9F%E5%86%85%E5%AD%98%E7%A9%BA%E9%97%B4.png)
+<img src="https://raw.githubusercontent.com/JiXuanYu0823/ReadingNotes/main/assets/Linux%E8%BF%9B%E7%A8%8B%E8%99%9A%E6%8B%9F%E5%86%85%E5%AD%98%E7%A9%BA%E9%97%B4.png" alt="Linux进程虚拟内存空间" style="zoom:67%;" />
 
