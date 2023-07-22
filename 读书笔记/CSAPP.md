@@ -1845,7 +1845,9 @@ testq 	a, b	;对两个操作数进行逻辑（按位）与操作 并根据运算
 
 - 各种寄存器及其作用：
 
-![各个寄存器及其用途](C:\Users\Lenovo\Desktop\TyporaAll\Typora图片\各个寄存器及其用途.png)
+![](https://raw.githubusercontent.com/YKTian-x2b/ReadingNotes/main/assets/%E5%90%84%E4%B8%AA%E5%AF%84%E5%AD%98%E5%99%A8%E5%8F%8A%E5%85%B6%E7%94%A8%E9%80%94.png)
+
+
 
 ### 100.2 Linux进程的虚拟内存空间
 
