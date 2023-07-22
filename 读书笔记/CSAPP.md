@@ -45,6 +45,13 @@
 
 - 做复杂判断的时候，0和TMIN是俩突破点。
 
+
+~~~C
+int x = 0;
+x = (x | -x) >> 31;
+cout << x << endl;
+~~~
+
 ## 3.浮点数
 
 - IEEE浮点数标准：(-1)^S^M2^E^，32位单精度和64位双精度。
@@ -211,7 +218,7 @@ absdiff:
 
 ### 6.1 Passing Control
 
-- 栈stack的生长方向和地址空间相反，栈底在高位地址空间，栈顶在地位地址空间。
+- 栈stack的生长方向和地址空间相反，栈底在高位地址空间，栈顶在低位地址空间。
 
 - 当在一个函数(procedure)中调用(call)另一个函数时，rip(instruction pointer)会替换为被调用函数的首地址，rsp(stack pointer)会 -=8，新增内容当前函数的下一指令地址。
 - 当被调用函数返回(return)时，rsp +=8 进行pop操作，rip获取该栈顶地址值，会返回调用函数的下一指令地址。
@@ -516,7 +523,6 @@ void unroll2a_combine(vec_ptr v, data_t *dest){
 ## 11.Cache Memories
 
 - cache memory 包含在CPU芯片内，完全由硬件管理，可以和register file、bus interface交互来避免频繁内存访问。
-  - 就是cache和memory间的又一层次
 - cache memory的构成：set array -> line array -> block data + tag + valid
 - cache address：tag + set idx + block offset
 - cache查找：set idx + tag 查看命中 -> valid 查看有效 -> block offset拿到数据首地址
@@ -1796,10 +1802,12 @@ for(int i = 0; i < 100; i++){
 
 
 
-
 ## 100.额外的知识
 
 - volatile 的意思是让编译器每次操作修饰的变量时一定要从内存中真正取出，而不是使用已经存在寄存器中的值。
+
+
+### 100.1 汇编
 
 - Intel处理器，8086/8286这些统称 x86。所以x86可以是Intel处理器的代称。是一种CISC。
 - ARM处理器，是一种RISC。
@@ -1835,7 +1843,36 @@ cqto	无		;符号扩展转换为八字 结果低位高位分别保存在两个�
 testq 	a, b	;对两个操作数进行逻辑（按位）与操作 并根据运算结果设置符号标志位、零标志位和奇偶标志位。
 ~~~
 
-- Linux进程的虚拟内存空间
+- 各种寄存器及其作用：
+
+![](C:\Users\Lenovo\Desktop\TyporaAll\ReadingNotes\assets\各个寄存器及其用途.png)
+
+
+
+
+
+### 100.2 Linux进程的虚拟内存空间
 
 <img src="https://raw.githubusercontent.com/JiXuanYu0823/ReadingNotes/main/assets/Linux%E8%BF%9B%E7%A8%8B%E8%99%9A%E6%8B%9F%E5%86%85%E5%AD%98%E7%A9%BA%E9%97%B4.png" alt="Linux进程虚拟内存空间" style="zoom:67%;" />
 
+
+
+### 100.3 IEEE浮点数
+
+- (-1)^s^ * M * 2^E^ 
+  - 这里S、M、E是真值；1/23/8 for float; 1/52/11 for double
+  - S是0/1
+  - E在规格化情况下是e - (2^k-1^ -1)，非规格化情况下是 1- (2^k-1^ -1)
+  - M在规格化情况下是1+0.f~n-1~f~n-2~...f~1~f~0~，非规格化情况下是0.f~n-1~f~n-2~...f~1~f~0~
+
+- 规格化值：阶码既不全0，也不全1。
+- 非规格化值：阶码全0。
+  - 非规格化值用来表示+/-0.0；e全0，f全0
+  - 也用来表示非常接近0.0的数；
+- 特殊值：阶码全1。
+  - f全0表示，+/-无穷
+  - f不全0表示，NaN
+
+
+
+### 100.4 

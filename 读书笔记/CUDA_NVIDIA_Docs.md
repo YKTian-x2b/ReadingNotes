@@ -888,7 +888,7 @@ cudaStreamSynchronize(0); // After the launch is synchronized, the remaining
 
 - 线程束调度器
 
-<img src="C:/Users/Lenovo/Desktop/%E9%B1%BC%E5%A7%AC%E7%8E%84%E7%9A%84%E4%B8%9C%E8%A5%BF/Typora%E5%9B%BE%E7%89%87/Streaming%20Multiprocessors%E6%9E%B6%E6%9E%84.png" style="zoom:80%;" />
+<img src="https://raw.githubusercontent.com/JiXuanYu0823/ReadingNotes/main/assets/Streaming%20Multiprocessors%E6%9E%B6%E6%9E%84.png" alt="Streaming Multiprocessors架构" style="zoom: 80%;" />
 
 ### 2. CUDA Memory
 
@@ -897,7 +897,74 @@ cudaStreamSynchronize(0); // After the launch is synchronized, the remaining
 
 ![CUDA可编程内存架构](https://raw.githubusercontent.com/JiXuanYu0823/ReadingNotes/main/assets/CUDA%E5%8F%AF%E7%BC%96%E7%A8%8B%E5%86%85%E5%AD%98%E6%9E%B6%E6%9E%84.png)
 
+### 3.优化总结
 
+#### 3.1 从层次结构考虑
+
+- Stream Level：
+  - 通过多个流启动网格级并发，重叠数据传输和计算。
+    - 最多重叠两个数据传输，一个I、一个O
+
+- Grid/Block Level：
+  - 实验调整gridsize和blocksize以最大化并行执行（尽可能提高SM和Core的占用率）。
+    - 初始值：((nElem -1) / block.x + 1) && 128/256
+    - Block数要远多于SM数
+- Warp Level：
+  - 尽可能提高并行warp数量，通过warp调度器调度来隐藏指令延迟。
+    - Block的线程数要是warp大小的倍数
+- Thread Level：
+  - 每个Thread要有很多独立的访存和计算指令，计算指令和调度可以隐藏访存延迟。
+    - 可以简单估计计算所需的并行量
+    - 可以简单估计计算和访存的周期数。
+    - 比如：对于IO密集型核函数，内存访问并行要有很高的优先级。
+
+#### 3.2 从内存访问优化考虑
+
+- 最小化主机和设备之间的数据传输。
+- 通过共享内存最小化全局内存的使用；改变数据访问方式，避免非合并全局内存访问（转置）。
+- 对齐合并全局内存访问，避免并行Block访问相同全局内存分区造成的分区冲突。
+- 避免共享内存的bank冲突。
+  - 内存填充
+
+- 记得只读常量内存
+
+#### 3.3 从指令优化考虑
+
+- 避免使用低吞吐量的算术指令
+  - 牺牲精度来提高速度，如浮点精度、内置和标准函数
+- 原子操作可能会严重降低性能
+
+#### 3.4 缓存使用
+
+- 是否开启一级缓存来应对（非）对齐、（非）合并全局内存访问。
+- 虽然缓存是不可编程的，但是一级缓存会缓存内存读操作，不会缓存内存写操作，可以利用该点优化（转置）。
+- 一级缓存的prefer和二级缓存的AccessPolicy
+- 只读缓存的显式使用
+
+#### 3.10 其他
+
+- 寄存器和共享内存的过度使用会显著影响常驻线程束数量
+- 避免分支分化
+- 在几个相关指标间寻找一个恰当的平衡来达到最佳的总体性能
+
+- 所有独立操作应该在非独立操作前发起
+- 任何类型的同步都应该被尽量延迟
+- 同步和隐式同步可能会造成性能损失
+  - 隐式同步：
+    - cudaMemcpy
+    - cudaMallocHost和cudaHostAlloc
+    - cudaMalloc
+    - cudaMemset
+    - cudaMemcpy D2D
+    - 一级缓存、共享内存配置修改
+    - any CUDA command to the NULL stream
+
+- 考虑硬件限制（对于3060）
+  - 一个block最多可以容纳：1024个线程、48KB共享内存、65536个寄存器
+  - 一个SM最多可以容纳：48个线程束（1536个线程）
+
+- 如果延迟是性能瓶颈，应该用多个小block来替代一个大block（不懂）
+- 
 
 # CUDA最佳实践指南
 
@@ -1185,7 +1252,7 @@ kernel<<<gridSize, blockSize>>>(a_map);
 
 ### 8.2 设备地址空间
 
-<img src="C:/Users/Lenovo/Desktop/%E9%B1%BC%E5%A7%AC%E7%8E%84%E7%9A%84%E4%B8%9C%E8%A5%BF/Typora%E5%9B%BE%E7%89%87/GPU_Memory_Space.png" style="zoom:50%;" />
+<img src="https://raw.githubusercontent.com/JiXuanYu0823/ReadingNotes/main/assets/GPU_Memory_Space.png" alt="GPU_Memory_Space" style="zoom:50%;" />
 
 #### 8.2.1 合并访问全局内存
 
@@ -1589,8 +1656,6 @@ for (i = 0; i < n; i++) {
 
 
 
-
-
 ## 15.准备部署
 
 
@@ -1632,3 +1697,316 @@ for (i = 0; i < n; i++) {
 - -prec-sqrt=false(低精度平方根)
 
 - -use_fast_math，它将每个functionName()调用强制转换为等效的__functionName()调用。这使得代码以降低精度和准确性为代价运行得更快。
+
+
+
+
+
+
+
+# CUDA编译器驱动NVCC
+
+## 1.概述
+
+- nvcc编译轨迹为每个源文件包含几个splitting、compilation、preprocessing and merging步骤。nvcc隐藏了CUDA编译的复杂过程。它接受一系列常规编译器选项，例如用于定义宏和包含/库路径，以及用于指导编译过程。所有非CUDA编译步都被发往受nvcc支持的C++主机编译器，并将其编译器选项转换为适当的主机编译器命令行选项。
+
+
+
+## 2.支持的主机编译器
+
+### 2.1 指定文件和路径
+
+~~~bash
+# -include 预处理步骤需要预包含的头文件
+--pre-include file,...
+# include search paths
+-I
+
+# --library(-l)
+--library-path <mypath> --library <mylib>
+
+# 宏 --undefine-macro
+-D
+
+# 默认静态
+--cudart {none|shared|static} (-cudart）
+#
+~~~
+
+### 2.2 编译阶段选项
+
+~~~bash
+# 编译并链接 inputfiles 默认输出a.out
+--link(-link)
+# 编译 inputfiles 成 目标文件 默认输出a.a
+--lib
+# 链接 可重定向设备代码、.ptx、.cubin、.fatbin成目标文件 是可执行的设备代码，可以被传递给主机linker
+# 默认输出 a_dlink.o
+--device-link(-dlink)
+
+# 将c cc cpp cxx cu文件编译成包含可重定向设备代码的目标代码 默认输出.o
+--device-c(-dc) 
+--relocatable-device-code=true --compile
+## 将c cc cpp cxx cu文件编译成包含可执行设备代码的目标代码 默认输出.o
+--device-w(-dw) 
+--relocatable-device-code=false --compile
+
+# Compile each .c, .cc, .cpp, .cxx, and .cu input file into an object file.
+-c(--compile)
+# Compile all .cu, .ptx, and .cubin input files to device-only .fatbin files.
+-fatbin
+# Compile all .cu and .ptx input files to device-only .cubin files.
+-cubin
+# Compile all .cu input files to device-only .ptx files.
+-ptx
+
+# 链接时生成共享库
+--shared
+# 指定inputfiles的语言
+-x {c|c++|cu}
+# 
+-std {c++03|c++11|c++14|c++17|c++20} 
+
+#
+-Xcompiler		# 直接向编译器/预处理器指定选项
+-Xlinker		# 直接向主机编译器指定选项
+-Xarchive		# 直接向库管理器指定选项
+-Xptxas			# 直接向PTX优化汇编程序指定选项
+-Xnvlink		# 直接向设备链接器指定选项
+
+# 把不认识的选项（-*）发给主机编译器
+-forward-unknown-to-host-compiler
+#
+-forward-unknown-to-host-linker
+# 指定编译步骤的并行线程数
+--threads number
+# List the compilation sub-commands
+-v
+-dryrun
+
+# Specify the name of the class of NVIDIA virtual GPU architecture sm_52
+--gpu-architecture {arch|native|all|all-major} (-arch)
+# Specify the name of the NVIDIA GPU to assemble and optimize PTX for.
+--gpu-code code,... (-code)
+# 等于--gpu-architecture=arch --gpu-code=code,...
+--generate-code specification (-gencode)
+# 
+--relocatable-device-code {true|false} (-rdc)
+~~~
+
+### 2.3 NVCC环境变量
+
+~~~bash
+# Flags to be injected before the normal nvcc command line.
+NVCC_PREPEND_FLAGS
+#Flags to be injected after the normal nvcc command line.
+NVCC_APPEND_FLAGS
+
+export NVCC_PREPEND_FLAGS='-G -keep -arch=sm_60'
+export NVCC_APPEND_FLAGS='-DNAME=" foo "'
+
+# For example, after setting:
+# The following invocation:
+nvcc foo.cu -o foo
+# Becomes equivalent to:
+nvcc -G -keep -arch=sm_60 foo.cu -o foo -DNAME=" foo "
+~~~
+
+
+
+## 3.GPU编译
+
+### 3.1 虚拟架构
+
+- 虚拟GPU架构提供了一个(很大程度上)通用的指令集，PTX程序总是以文本格式表示。
+- 为了使这样的两阶段nvcc命令有效，真实的体系结构必须是虚拟体系结构的实现
+
+- 虚拟架构的选择体现了应用的需求，也应该”恰好“满足需求，越小越好。这样会有更wider的真实架构选择。相对的，真实架构（运行时GPU）应该越大越好，能保证真正生成代码的质量更好。
+
+<img src="https://raw.githubusercontent.com/JiXuanYu0823/ReadingNotes/main/assets/NVCC%E4%B8%A4%E9%98%B6%E6%AE%B5%E7%BC%96%E8%AF%91.png" alt="NVCC两阶段编译" style="zoom: 80%;" />
+
+### 3.2 即时编译
+
+- 真实架构的选择会涉及性能和GPU coverage的折中。
+- 即时编译 通过指定虚拟架构将PTX代码的汇编延迟到应用运行时。
+
+~~~bash
+# For instance, the command below allows generation of exactly matching GPU binary code, when the application is
+# launched on an sm_50 or later architecture.
+nvcc x.cu --gpu-architecture=compute_50 --gpu-code=compute_50
+~~~
+
+- 即时编译的缺点是增加应用程序启动延迟，但可以通过让CUDA驱动程序使用编译缓存来缓解这一问题，该缓存在应用程序多次运行时持久化。
+
+### 3.3 胖二进制
+
+- 胖二进制：指定多个code实例
+
+~~~bash
+nvcc x.cu --gpu-architecture=compute_50 --gpu-code=compute_50,sm_50,sm_52
+~~~
+
+- 该命令为两个Maxwell变体生成精确的代码，加上PTX代码，以供JIT在遇到下一代GPU时使用。nvcc将其设备代码组织在fatbinaries中，这能够保存相同GPU源代码的多个翻译。在运行时，当设备功能启动时，CUDA驱动程序将选择最合适的翻译。
+
+### 3.4 Example
+
+~~~bash
+# gpu-architecture指定 虚拟架构单值 ； gpu-code指定 实际gpu名称列表 
+nvcc x.cu --gpu-architecture=compute_50 --gpu-code=sm_50,sm_52
+
+# --gpu-code的值是虚拟架构时，该虚拟架构的第二阶段编译将在运行时启动，如果没有更好的PTX作为中间结构，那么默认用该虚拟架构的PTX
+nvcc x.cu --gpu-architecture=compute_50 --gpu-code=compute_50,sm_50,sm_52
+
+# 默认值如下 
+nvcc x.cu --gpu-architecture=compute_52 --gpu-code=sm_52,compute_52
+~~~
+
+- 扩展符号：--generate-code
+  - --gpu-architecture和--gpu-code组合 单独的虚拟架构调用意味着实际架构都支持相同的特性。
+  - 但有时需要执行不同的GPU代码生成步骤，在不同的架构上进行分区。
+
+~~~bash
+nvcc x.cu \
+--generate-code arch=compute_50,code=sm_50 \
+--generate-code arch=compute_50,code=sm_52 \
+--generate-code arch=compute_53,code=sm_53
+~~~
+
+- 虚拟架构宏
+  - __CUDA_ARCH__ == xy0，0是字面值，xy意味着一阶段将产生compute_xy;
+    - 该宏可用于设备端函数，不能用于主机端code
+  - __CUDA_ARCH_LIST__ 就是CUDA_ARCH的列表，升序排列，编译c/cpp/cuda时定义
+
+~~~bash
+# define __CUDA_ARCH_LIST__ as 500,530,800
+nvcc x.cu \
+--generate-code arch=compute_80,code=sm_80 \
+--generate-code arch=compute_50,code=sm_52 \
+--generate-code arch=compute_50,code=sm_50 \
+--generate-code arch=compute_53,code=sm_53
+~~~
+
+## 4.分离编译
+
+- 默认仍旧是whole program mode。
+- 在分离编译情景下，用static和extern来获取可见性。
+  - 为了避免static造成的多文件变量同名冲突，我们用地址而不是变量来引用符号。
+- 在whole program mode中，将可执行设备代码嵌入到host object中。在分离编译中，我们将可重定位设备代码嵌入到宿主对象中，并运行设备链接器nvlink，将所有设备代码链接在一起。接下来，通过host链接器将nvlink的输出与所有host对象链接在一起，形成最终的可执行文件。
+
+~~~bash
+# 可重定向设备代码
+--relocatable-device-code=true --compile 或 --device-c
+# 仅调用设备链接器
+--device-linker
+# 隐式调用主机和设备linker
+nvcc <object>
+~~~
+
+- **设备链接器有能力读取静态主机库，会忽略动态主机库**
+
+- The --library and --library-path options can be used to pass libraries to both the device and host linker. The library name is specified without the library file extension when the --library option is used.
+
+~~~bash
+nvcc --gpu-architecture=sm_50 a.o b.o --library-path=<path> --library=foo
+~~~
+
+
+
+
+
+
+
+# CUDA性能分析工具
+
+- Nsight System：系统层面的，可以分析CPU、GPU的使用和交互情况。用它来减少不必要的数据传输、同步等行为。
+- Nsight Compute：内核层面的。
+
+## 1.Nsight System
+
+
+
+
+
+## 2.Nsight Compute
+
+- Section：一系列相近指标的集合，反映了内核在某个角度的表现，比如memory、compute、latency。
+- SOL(speed of light) section：计算约束(compute bound)、内存约束、延迟约束
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 其他
+
+### 1.warp阻塞原因
+
+- 造成warp阻塞的主要原因：
+  - 指令fetch
+  - 内存依赖
+  - 执行依赖
+  - 流水线忙
+  - 同步栅栏
+
+### 2.加速数据传输的方法
+
+1. 使用异步传输：在CPU和GPU之间进行数据传输时，可以使用异步传输，以便在数据传输期间执行其他任务。CUDA提供了异步内存拷贝API `cudaMemcpyAsync()` 和 `cudaMemcpy2DAsync()`，可通过将数据传输指令与执行内核函数的指令分离，来实现数据传输的异步化。
+2. 使用流：CUDA提供了流（Stream）的概念，它允许在同一设备上并发执行多个操作。使用流可以允许主机端和设备端的操作重叠，进而减少数据传输的等待时间，提高传输效率。
+3. 使用Pinned内存：CUDA提供了一种特殊的内存类型，叫做Pinned内存（Pinned Memory）。Pinned内存可以通过一种特殊的分配方式，将内存直接锁定在主机物理内存中，而不是普通的虚拟内存中。因为Pinned内存不需要进行页面置换和地址映射等操作，所以它在CPU和GPU之间进行数据传输时，可以显著提高传输效率。CUDA提供了Pinned内存分配API `cudaHostAlloc()` 和 `cudaHostRegister()`。
+4. 批量传输：在数据量较大的情况下，将数据分成多个较小的块，并使用多个异步传输操作，可以显著提高传输效率。
+5. 使用零拷贝技术：CUDA提供了一种称为零拷贝（Zero Copy）技术的方法，它可以通过内存共享，让GPU直接读写主机端内存，从而避免了主机端到设备端的数据传输。这种方法可以在一定程度上减少数据传输的开销，但是需要注意一些额外的开销，如内存管理和同步。
+
+
+
+### 3.GPU架构
+
+1. Tesla、Fermi、Kepler、Maxwell、Pascal、Volta、Turing、Ampere。
